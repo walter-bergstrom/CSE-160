@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>WebGL Paint App</title>
+  </head>
+
+  <body onload="main()">
+    <canvas id="webgl" width="400" height="400">
+      Please use a browser that supports "canvas"
+    </canvas>
+
+    <br>
+
+    <button id="clearButton">Clear Canvas</button>
+
+    <p>Drawing Mode:</p>
+    <button id="pointModeBtn">Squares</button>
+    <button id="triangleModeBtn">Triangles</button>
+    <button id="circleModeBtn">Circles</button>
+    <button id="houseButton">Draw House</button>
+
+    <p>Shape Color:</p>
+    <label>Red <input type="range" min="0" max="100" value="100" id="redSlider"></label>
+    <label>Green <input type="range" min="0" max="100" value="0" id="greenSlider"></label>
+    <label>Blue <input type="range" min="0" max="100" value="0" id="blueSlider"></label>
+
+    <label>Transparency <input type="range" min="0" max="100" value="100" id="alphaSlider"></label>
+
+    <p>Shape Size:</p>
+    <input type="range" min="1" max="40" value="10" id="sizeSlider">
+
+    <p>(Circles) Segment Count:</p>
+    <input type="range" min="3" max="30" value="10" id="segmentSlider"> 
+
+    <p>My drawing:</p>
+    <img src="../lib/IMG_0210.jpeg" alt="My triangle drawing" width="300">
+
+
+    <script src="../lib/webgl-utils.js"></script>
+    <script src="../lib/webgl-debug.js"></script>
+    <script src="../lib/cuon-utils.js"></script>
+    <script src="ColoredPoints.js"></script>
+  </body>
+</html>
+
