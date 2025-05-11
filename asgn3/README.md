@@ -17,8 +17,8 @@ Right‑click – delete top block in front (menu is disabled)
 
 References:
 
-gl‑matrix‑min.js (CDN 3.4.3) for the mat4 / vec math for all the camera + model transforms.
+gl‑matrix‑min.js (CDN 3.4.3) found by googling for "webGL matrix library" and documentation wasn't too complicated (https://glmatrix.net/)
 
-File is included but source is: https://cdnjs.cloudflare.com/ajax/libs/gl-matrix/3.4.3/gl-matrix-min.js
+File is included in Zip, to obtain I did a curl from here: https://cdnjs.cloudflare.com/ajax/libs/gl-matrix/3.4.3/gl-matrix-min.js
 
 Documentation: https://glmatrix.net/docs/
