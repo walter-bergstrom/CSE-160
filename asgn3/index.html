@@ -1,0 +1,440 @@
+<!--  -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Voxel World – Skeleton</title>
+
+  <!-- Full‑window canvas style -->
+  <style>
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #000; }
+    #glcanvas   { width: 100%; height: 100%; display: block; }
+    #hud{
+      position:fixed;
+      top:10px; left:50%;
+      transform:translateX(-50%);
+      color:#fff; font-family:sans-serif;
+      font-size:18px; letter-spacing:1px;
+      text-shadow:0 0 4px #000;
+      pointer-events:none;
+    }
+  </style>
+
+  <!-- gl‑Matrix source="https://cdnjs.cloudflare.com/ajax/libs/gl-matrix/3.4.3/gl-matrix-min.js"> -->
+  <script src="libs/gl-matrix-min.js"></script>
+</head>
+
+<body>
+<canvas id="glcanvas"></canvas>
+
+<div id="hud">Try to find the RGB cubes</div>
+
+<!-- Main WebGL code  -->
+<script type="module">
+
+const { mat4, vec3, vec2 } = glMatrix;
+
+/*  Utility helpers ----------------------------------------------   */
+
+const compileShader = (gl, src, type) => {
+  const sh = gl.createShader(type);
+  gl.shaderSource(sh, src);
+  gl.compileShader(sh);
+  if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS))
+    throw new Error(gl.getShaderInfoLog(sh));
+  return sh;
+};
+
+const createProgram = (gl, vsSrc, fsSrc) => {
+  const p = gl.createProgram();
+  gl.attachShader(p, compileShader(gl, vsSrc, gl.VERTEX_SHADER));
+  gl.attachShader(p, compileShader(gl, fsSrc, gl.FRAGMENT_SHADER));
+  gl.linkProgram(p);
+  if (!gl.getProgramParameter(p, gl.LINK_STATUS))
+    throw new Error(gl.getProgramInfoLog(p));
+  return p;
+};
+
+const loadTexture = (gl, url, unit) => {
+  const tex = gl.createTexture();
+  gl.activeTexture(gl.TEXTURE0 + unit);
+  gl.bindTexture(gl.TEXTURE_2D, tex);
+  /* tiny black pixel while image loads */
+  gl.texImage2D(
+    gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0,
+    gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([0, 0, 0, 255])
+  );
+  const img = new Image();
+  img.onload = () => {
+    gl.activeTexture(gl.TEXTURE0 + unit);
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA,
+                  gl.UNSIGNED_BYTE, img);
+    gl.generateMipmap(gl.TEXTURE_2D);
+  };
+  img.src = url;
+  return tex;
+};
+
+/*  Shader source   --------------------------------------   */
+
+const VSHADER = `
+attribute vec3 a_pos;
+attribute vec2 a_uv;
+uniform   mat4 uM, uV, uP;
+varying   vec2 v_uv;
+void main() {
+  gl_Position = uP * uV * uM * vec4(a_pos, 1.0);
+  v_uv = a_uv;
+}`;
+
+const FSHADER = `
+precision mediump float;
+uniform sampler2D uS;
+uniform vec4      uC;
+uniform float     uW;   /* 0 = solid colour, 1 = texture */
+varying vec2      v_uv;
+void main() {
+  vec4 tex = texture2D(uS, v_uv);
+  gl_FragColor   = mix(uC, tex, uW);
+}`;
+
+/* ------------------------------------------------------------------ */
+/*  Camera class (WASD + mouse look) ------------------------------------- */
+class Camera {
+  constructor(canvas) {
+    this.fov   = 60;
+    this.eye   = [0, 1.6, 4];
+    this.pitch = 0;
+    this.yaw   = -90;        /* facing −Z */
+    this.speed = 0.15;
+    this.sense = 0.12;
+    this.turn  = 2;             // ← degrees per frame for Q/E
+    this.keys  = new Set();
+
+    this._onMouseMove = this._onMouseMove.bind(this);
+
+    canvas.addEventListener('click', () => canvas.requestPointerLock());
+    document.addEventListener('pointerlockchange', () => {
+      if (document.pointerLockElement === canvas)
+        document.addEventListener('mousemove', this._onMouseMove);
+      else
+        document.removeEventListener('mousemove', this._onMouseMove);
+    });
+
+    addEventListener('keydown', e => this.keys.add(e.key.toLowerCase()));
+    addEventListener('keyup',   e => this.keys.delete(e.key.toLowerCase()));
+  }
+
+  _onMouseMove(e) {
+    this.yaw   += e.movementX * this.sense;
+    this.pitch -= e.movementY * this.sense;
+    this.pitch  = Math.max(-89, Math.min(89, this.pitch));
+  }
+
+  _forward() {
+    const p = this.pitch * Math.PI / 180,
+          y = this.yaw   * Math.PI / 180;
+    return [Math.cos(p) * Math.cos(y), Math.sin(p),
+            Math.cos(p) * Math.sin(y)];
+  }
+
+  update() {
+    const f = this._forward(),
+          r = [ -f[2], 0, f[0] /* right vector (cross) */ ];
+    const move = (v, s) => {
+      this.eye[0] += v[0] * s;
+      this.eye[1] += v[1] * s;
+      this.eye[2] += v[2] * s;
+    };
+    if (this.keys.has('w')) move(f,  this.speed);
+    if (this.keys.has('s')) move(f, -this.speed);
+    if (this.keys.has('a')) move(r, -this.speed);
+    if (this.keys.has('d')) move(r,  this.speed);
+    if (this.keys.has('q')) this.yaw -= this.turn;
+    if (this.keys.has('e')) this.yaw += this.turn;
+  }
+
+  view() {
+    const f = this._forward();
+    return mat4.lookAt(mat4.create(),
+      this.eye,
+      [this.eye[0] + f[0], this.eye[1] + f[1], this.eye[2] + f[2]],
+      [0, 1, 0]);
+  }
+
+  proj(aspect) {
+    return mat4.perspective(mat4.create(),
+      this.fov * Math.PI / 180, aspect, 0.1, 1000);
+  }
+}
+
+/*  Cube helper (interleaved positions + UV) ----------------------------------------*/
+
+class Cube {
+  constructor(gl) {
+    if (!Cube._init) Cube._setup(gl);
+    this.model  = mat4.create();
+    this.unit   = 0;           /* texture unit */
+    this.color  = [1, 1, 1, 1];
+    this.weight = 0;           /* 0 = solid colour, 1 = texture */
+  }
+
+  static _setup(gl) {
+  const V = [
+    // x, y, z,  u, v
+    // Front
+    -0.5, -0.5,  0.5,   0, 0,
+     0.5, -0.5,  0.5,   1, 0,
+     0.5,  0.5,  0.5,   1, 1,
+    -0.5,  0.5,  0.5,   0, 1,
+    // Back
+    -0.5, -0.5, -0.5,   1, 0,
+    -0.5,  0.5, -0.5,   1, 1,
+     0.5,  0.5, -0.5,   0, 1,
+     0.5, -0.5, -0.5,   0, 0,
+    // Top
+    -0.5,  0.5, -0.5,   0, 1,
+    -0.5,  0.5,  0.5,   0, 0,
+     0.5,  0.5,  0.5,   1, 0,
+     0.5,  0.5, -0.5,   1, 1,
+    // Bottom
+    -0.5, -0.5, -0.5,   1, 1,
+     0.5, -0.5, -0.5,   0, 1,
+     0.5, -0.5,  0.5,   0, 0,
+    -0.5, -0.5,  0.5,   1, 0,
+    // Right
+     0.5, -0.5, -0.5,   0, 0,
+     0.5,  0.5, -0.5,   1, 0,
+     0.5,  0.5,  0.5,   1, 1,
+     0.5, -0.5,  0.5,   0, 1,
+    // Left
+    -0.5, -0.5, -0.5,   1, 0,
+    -0.5, -0.5,  0.5,   0, 0,
+    -0.5,  0.5,  0.5,   0, 1,
+    -0.5,  0.5, -0.5,   1, 1
+  ];
+
+
+  const I = [
+     0,  1,  2,   0,  2,  3,   // Front
+     4,  5,  6,   4,  6,  7,   // Back
+     8,  9, 10,   8, 10, 11,   // Top
+    12, 13, 14,  12, 14, 15,   // Bottom
+    16, 17, 18,  16, 18, 19,   // Right
+    20, 21, 22,  20, 22, 23    // Left
+  ];
+
+  /* ---- VBO ---- */
+  Cube.vbo = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, Cube.vbo);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(V), gl.STATIC_DRAW);
+
+  /* ---- IBO ---- */
+  Cube.ibo = gl.createBuffer();
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, Cube.ibo);
+  gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(I), gl.STATIC_DRAW);
+
+  Cube.count = I.length;
+  Cube._init = true;
+}
+
+  draw(gl, L) {
+    gl.bindBuffer(gl.ARRAY_BUFFER, Cube.vbo);
+    gl.vertexAttribPointer(L.a_pos, 3, gl.FLOAT, false, 5 * 4, 0);
+    gl.enableVertexAttribArray(L.a_pos);
+    gl.vertexAttribPointer(L.a_uv,  2, gl.FLOAT, false, 5 * 4, 3 * 4);
+    gl.enableVertexAttribArray(L.a_uv);
+
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, Cube.ibo);
+
+    gl.uniformMatrix4fv(L.uM, false, this.model);
+    gl.uniform4fv      (L.uC, this.color);
+    gl.uniform1f       (L.uW, this.weight);
+    gl.uniform1i       (L.uS, this.unit);
+
+    gl.drawElements(gl.TRIANGLES, Cube.count, gl.UNSIGNED_SHORT, 0);
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/*  Main setup                                                        */
+/* ------------------------------------------------------------------ */
+const canvas = document.getElementById('glcanvas'),
+      gl     = canvas.getContext('webgl');
+window.gl = gl;          /* optional: console access */
+
+if (!gl) alert('WebGL unsupported in this browser.');
+
+const prog = createProgram(gl, VSHADER, FSHADER);
+gl.useProgram(prog);
+
+const loc = {
+  a_pos : gl.getAttribLocation(prog, 'a_pos'),
+  a_uv  : gl.getAttribLocation(prog, 'a_uv'),
+  uM    : gl.getUniformLocation(prog, 'uM'),
+  uV    : gl.getUniformLocation(prog, 'uV'),
+  uP    : gl.getUniformLocation(prog, 'uP'),
+  uC    : gl.getUniformLocation(prog, 'uC'),
+  uS    : gl.getUniformLocation(prog, 'uS'),
+  uW    : gl.getUniformLocation(prog, 'uW')
+};
+
+/* textures */
+loadTexture(gl, 'textures/wall.jpg',   0);
+loadTexture(gl, 'textures/ground.jpg', 1);
+loadTexture(gl, 'textures/sky.jpg',    2);
+
+/* scene objects */
+const sky = new Cube(gl);
+mat4.scale(sky.model, sky.model, [500, 500, 500]);
+sky.color  = [0.6, 0.8, 1, 1];
+sky.weight = 0;
+
+const ground = new Cube(gl);
+mat4.scale    (ground.model, ground.model, [32, 0.05, 32]);
+mat4.translate(ground.model, ground.model, [0, -0.525, 0]);
+ground.unit   = 1;
+ground.weight = 1;
+
+const sample = new Cube(gl);
+mat4.translate(sample.model, sample.model, [0, 0.5, 0]);
+sample.unit   = 0;
+sample.weight = 1;
+
+/* 32×32 voxel world  ─────────────────────────────── */
+const SIZE = 32, world = [];
+const heights = Array.from({ length: SIZE }, () => Array(SIZE).fill(0));//For add/delete
+const stacks  = Array.from({ length: SIZE }, () =>//For add/delete
+                 Array.from({ length: SIZE }, () => []));//For add/delete
+
+for (let x = 0; x < SIZE; x++) {
+  for (let z = 0; z < SIZE; z++) {
+
+    /* height: 2‑block perimeter, else 0 or 1‑4 randomly */
+    const h = (x === 0 || x === SIZE - 1 || z === 0 || z === SIZE - 1)
+              ? 2
+              : (Math.random() < 0.08 ? Math.floor(Math.random() * 4) + 1 : 0);
+
+    heights[z][x] = h; //For add/delete
+
+    for (let y = 0; y < h; y++) {
+      const block = new Cube(gl);
+
+      /* centre the map so (0,0) is the middle of the ground slab */
+      mat4.translate(block.model, block.model,
+        [x - SIZE / 2 + 0.5,  y + 0.5,  z - SIZE / 2 + 0.5]);
+
+      block.unit   = 0;   /* wall.jpg */
+      block.weight = 1;
+      world.push(block);
+      stacks[z][x].push(block); //For add/delete
+    }
+  }
+
+  /* ------------------------------------------------------------------
+       3 × coloured cubes to hunt for
+    ------------------------------------------------------------------ */
+    const rgbPositions = [
+      [-6, 0.5, -6, 1, 0, 0],   // Red
+      [ 0, 0.5,  7, 0, 1, 0],   // Green
+      [ 5, 0.5, -2, 0, 0, 1]    // Blue
+    ];
+
+    for (const [px, py, pz, r, g, b] of rgbPositions) {
+      const c = new Cube(gl);
+      mat4.translate(c.model, c.model, [px, py, pz]);
+      c.color  = [r, g, b, 1];
+      c.weight = 0;             // ← solid colour (ignore texture)
+      world.push(c);
+    }
+}
+
+/* GL state */
+gl.enable(gl.DEPTH_TEST);
+
+function resize() {
+  canvas.width  = innerWidth;
+  canvas.height = innerHeight;
+  gl.viewport(0, 0, canvas.width, canvas.height);
+}
+addEventListener('resize', resize);
+resize();
+
+/* render loop */
+const cam = new Camera(canvas);
+
+//------ new ------------------------------------------------------
+
+/* ─── Mouse add / remove ─── */
+canvas.oncontextmenu = e => e.preventDefault();   // disable right‑click menu
+canvas.addEventListener('mousedown', e => {
+  if (e.button === 0)  placeBlock();
+  if (e.button === 2)  removeBlock();
+});
+
+
+
+function frontCell() {
+  const f = cam._forward();                           // forward vector
+  const wx = cam.eye[0] + f[0];
+  const wz = cam.eye[2] + f[2];
+  const ix = Math.floor(wx + SIZE / 2);
+  const iz = Math.floor(wz + SIZE / 2);
+  return (ix < 0 || ix >= SIZE || iz < 0 || iz >= SIZE) ? null : [ix, iz];
+}
+
+
+function placeBlock() {
+  const cell = frontCell();
+  if (!cell) return;
+  const [x, z] = cell;
+  if (heights[z][x] >= 4) return;            // max 4 high
+  const y = heights[z][x];
+
+  const b = new Cube(gl);
+  mat4.translate(b.model, b.model,
+    [x - SIZE / 2 + 0.5, y + 0.5, z - SIZE / 2 + 0.5]);
+  b.unit = 0; b.weight = 1;
+  world.push(b);
+  stacks[z][x].push(b);
+  heights[z][x]++;
+}
+
+function removeBlock() {
+  const cell = frontCell();
+  if (!cell) return;
+  const [x, z] = cell;
+  if (heights[z][x] === 0) return;           // nothing to delete
+
+  const b = stacks[z][x].pop();
+  heights[z][x]--;
+  const idx = world.indexOf(b);
+  if (idx !== -1) world.splice(idx, 1);      // remove from draw list
+}
+
+//------ end new ------------------------------------------------------
+
+
+function render() {
+  cam.update();
+
+  gl.clearColor(0, 0, 0, 1);
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+  gl.uniformMatrix4fv(loc.uV, false, cam.view());
+  gl.uniformMatrix4fv(loc.uP, false, cam.proj(canvas.width / canvas.height));
+
+  sky.draw    (gl, loc);
+  ground.draw (gl, loc);
+
+  for (const b of world) b.draw(gl, loc);
+
+  sample.draw (gl, loc);
+
+  requestAnimationFrame(render);
+}
+requestAnimationFrame(render);
+</script>
+</body>
+</html>
