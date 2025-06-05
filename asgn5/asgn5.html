@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Assignment 5 – Three.js Pointer-Lock World</title>
+  <style>
+    body { margin: 0; overflow: hidden; }
+    #debug { position: fixed; top: 0; left: 0; padding: .3rem .6rem; background: rgba(0,0,0,.6); color: #fff; font: 12px/1 monospace; z-index: 10; }
+    #overlay { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,.8); color: #fff; font: 24px/1.4 sans-serif; cursor: pointer; z-index: 20; }
+  </style>
+
+  <!-- Import map – Three.js v0.165.0 -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/"
+    }
+  }
+  </script>
+</head>
+<body>
+  <div id="overlay">Click to enter Pointer-Lock&nbsp;mode</div>
+  <div id="debug"></div>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
+    import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+    /* ---------------- Renderer & scene ---------------- */
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(innerWidth, innerHeight);
+    renderer.shadowMap.enabled = true;
+    document.body.appendChild(renderer.domElement);
+
+    const scene = new THREE.Scene();
+
+    /* ---------------- Skybox ---------------- */
+    const cubeTexLoader = new THREE.CubeTextureLoader();
+    scene.background = cubeTexLoader.load([
+      'textures/skybox/px.jpg', 'textures/skybox/nx.jpg',
+      'textures/skybox/py.jpg', 'textures/skybox/ny.jpg',
+      'textures/skybox/pz.jpg', 'textures/skybox/nz.jpg'
+    ]);
+
+    /* ---------------- Camera & controls ---------------- */
+    const camera = new THREE.PerspectiveCamera(75, innerWidth / innerHeight, 0.1, 1000);
+    camera.position.set(0, 2, 8);
+
+    const controls = new PointerLockControls(camera, document.body);
+    scene.add(controls.getObject());
+
+    const overlay = document.getElementById('overlay');
+    overlay.addEventListener('click', () => controls.lock());
+    controls.addEventListener('lock',   () => overlay.style.display = 'none');
+    controls.addEventListener('unlock', () => overlay.style.display = 'flex');
+
+    /* ---------------- Lights (exactly 3) ---------------- */
+    // 1) Ambient – global fill
+    scene.add(new THREE.AmbientLight(0xffffff, 0.25));
+
+    // 2) Directional – white “sun” light
+    const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+    dirLight.position.set(6, 12, 4);
+    dirLight.castShadow = true;
+    dirLight.shadow.mapSize.setScalar(1024);
+    scene.add(dirLight);
+
+    // 3) Spot – warm key light from left-rear
+    const spot = new THREE.SpotLight(0xffbb88, 1.2, 50, Math.PI / 6, 0.4, 1.8);
+    spot.position.set(-12, 15, -10);
+    spot.castShadow = true;
+    scene.add(spot);
+
+    /* ---------------- Materials ---------------- */
+    const texLoader = new THREE.TextureLoader();
+    const crateTex = texLoader.load('textures/crate_diffuse.jpg');
+
+    const basicMats = [
+      new THREE.MeshStandardMaterial({ color: 0x4caf50 }),
+      new THREE.MeshStandardMaterial({ color: 0x2196f3 }),
+      new THREE.MeshStandardMaterial({ color: 0xff5722 }),
+      new THREE.MeshStandardMaterial({ map: crateTex })
+    ];
+
+    /* ---------------- Primary shapes (≥20) ---------------- */
+    function rand(min, max) { return Math.random() * (max - min) + min; }
+
+    for (let i = 0; i < 22; ++i) {
+      let geo;
+      switch (i % 3) {
+        case 0: geo = new THREE.BoxGeometry(1, 1, 1); break;
+        case 1: geo = new THREE.SphereGeometry(0.5, 32, 32); break;
+        case 2: geo = new THREE.CylinderGeometry(0.5, 0.5, 1, 32); break;
+      }
+      const mesh = new THREE.Mesh(geo, basicMats[i % basicMats.length]);
+      mesh.castShadow = mesh.receiveShadow = true;
+      mesh.position.set(rand(-10, 10), rand(0.5, 3), rand(-10, 10));
+      scene.add(mesh);
+    }
+
+    /* ---------------- Animated sphere ---------------- */
+    const animatedSphere = new THREE.Mesh(
+      new THREE.SphereGeometry(0.75, 32, 32),
+      new THREE.MeshStandardMaterial({ color: 0xffff00 })
+    );
+    animatedSphere.castShadow = true;
+    animatedSphere.position.set(0, 1.5, 0);
+    scene.add(animatedSphere);
+
+    /* ---------------- Custom GLB model ---------------- */
+    new GLTFLoader().load('models/vase.glb', (gltf) => {
+      const model = gltf.scene;
+      model.traverse(o => o.isMesh && (o.castShadow = o.receiveShadow = true));
+      model.position.set(0, 0, -5);
+      scene.add(model);
+    });
+
+    /* ---------------- Movement flags ---------------- */
+    const move = { forward: false, back: false, left: false, right: false };
+    const SPEED = 6;
+
+    addEventListener('keydown', (e) => {
+      switch (e.code) {
+        case 'KeyW': case 'ArrowUp':    move.forward = true; break;
+        case 'KeyS': case 'ArrowDown':  move.back    = true; break;
+        case 'KeyA': case 'ArrowLeft':  move.left   = true; break;
+        case 'KeyD': case 'ArrowRight': move.right  = true; break;
+        case 'KeyR': randomiseColours(); break;
+      }
+    });
+    addEventListener('keyup', (e) => {
+      switch (e.code) {
+        case 'KeyW': case 'ArrowUp':    move.forward = false; break;
+        case 'KeyS': case 'ArrowDown':  move.back    = false; break;
+        case 'KeyA': case 'ArrowLeft':  move.left   = false; break;
+        case 'KeyD': case 'ArrowRight': move.right  = false; break;
+      }
+    });
+
+    function randomiseColours() {
+      scene.traverse(obj => obj.isMesh && obj.material?.color && obj.material.color.set(Math.random() * 0xffffff));
+    }
+
+    /* ---------------- Resize ---------------- */
+    addEventListener('resize', () => {
+      camera.aspect = innerWidth / innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(innerWidth, innerHeight);
+    });
+
+    /* ---------------- Main loop ---------------- */
+    const clock = new THREE.Clock();
+    const fpsOut = document.getElementById('debug');
+
+    function animate() {
+      requestAnimationFrame(animate);
+      const dt = clock.getDelta();
+
+      const d = SPEED * dt;
+      if (move.forward) controls.moveForward(d);
+      if (move.back)    controls.moveForward(-d);
+      if (move.left)    controls.moveRight(-d);
+      if (move.right)   controls.moveRight(d);
+
+      animatedSphere.rotation.y += dt;
+      animatedSphere.position.y = 1.5 + Math.sin(clock.elapsedTime * 2) * 0.35;
+
+      renderer.render(scene, camera);
+      fpsOut.textContent = `${(1/dt).toFixed(1)} fps`;
+    }
+    animate();
+  </script>
+
+</body>
+</html>
